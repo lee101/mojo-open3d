@@ -5,7 +5,6 @@ addresses and are rebuilt with a concrete mutable origin inside each export.
 """
 
 from std.math import floor, sqrt
-from std.algorithm import parallelize
 from std.sys.info import simd_width_of
 
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
@@ -540,7 +539,7 @@ def kdtree_build(
             nodes[6] = indices[m6]
             axes[6] = 2
 
-            @parameter
+            @__parameter
             def build_subtree(task: Int) capturing -> None:
                 var task_points = fp(points_addr)
                 var task_indices = ip(indices_addr)
@@ -628,7 +627,8 @@ def kdtree_build(
                         14,
                     )
 
-            parallelize[build_subtree](8)
+            for task in range(8):
+                build_subtree(task)
 
 
 @export("m3d_kdtree_build")
@@ -693,7 +693,7 @@ def kdtree_search(
             query_count + KDTREE_SEARCH_CHUNK_SIZE - 1
         ) // KDTREE_SEARCH_CHUNK_SIZE
 
-        @parameter
+        @__parameter
         def search_chunk(chunk: Int) capturing -> None:
             var task_points = fp(points_addr)
             var task_nodes = ip(nodes_addr)
@@ -719,7 +719,8 @@ def kdtree_search(
                     task_result_counts,
                 )
 
-        parallelize[search_chunk](chunk_count)
+        for chunk in range(chunk_count):
+            search_chunk(chunk)
 
 
 @export("m3d_kdtree_search")
