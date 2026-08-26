@@ -100,17 +100,24 @@ These are the real results from this repository.
 
 | case | mojo-open3d | Open3D 0.19 | result |
 | --- | ---: | ---: | ---: |
-| Voxel downsample (1M points) | 308.55 ms | 795.21 ms | 2.58x faster |
-| KD-tree build (250k points) | 37.79 ms | 108.12 ms | 2.86x faster |
-| KNN k=8 (250k x 25k) | 7.93 ms | 122.76 ms | 15.48x faster |
-| Cloud distance (100k to 250k) | 64.71 ms | 119.91 ms | 1.85x faster |
-| Rigid estimate (500k pairs) | 9.25 ms | 18.22 ms | 1.97x faster |
-| Point-to-point ICP (30k points) | 34.77 ms | 69.63 ms | 2.00x faster |
+| Voxel downsample (1M points) | 313.30 ms | 963.25 ms | 3.07x faster |
+| KD-tree build (250k points) | 42.57 ms | 124.79 ms | 2.93x faster |
+| KNN k=8 (250k x 25k) | 13.99 ms | 132.50 ms | 9.47x faster |
+| Cloud distance (100k to 250k) | 87.96 ms | 153.35 ms | 1.74x faster |
+| Rigid estimate (500k pairs) | 11.91 ms | 23.72 ms | 1.99x faster |
+| Point-to-point ICP (30k points) | 58.73 ms | 68.54 ms | 1.17x faster |
 
-Large independent query batches and large tree builds use CPU parallelism;
-smaller jobs remain serial to avoid launch overhead. Search-result and
-tree-buffer initialization use native-width SIMD stores with scalar remainder
-loops. There is no GPU path.
+Large independent query batches and the eight top-level KD subtrees use a
+persistent CPU worker pool above size thresholds; smaller jobs remain serial
+to avoid launch overhead. Index, search-result, and tree-buffer initialization
+use native-width SIMD stores with scalar remainder loops. FFI workers derive
+buffer addresses from zero-copy NumPy base pointers instead of constructing
+array slices per task.
+
+There is no GPU path: KD construction and search, voxel hashing, and ICP
+correspondence lookup are irregular and branch-heavy, while the dense rigid
+and transform kernels remain below roughly two flops per byte moved. Transfer
+and launch costs would dominate these covered operations.
 
 ## How it works
 

@@ -4,7 +4,7 @@ All storage belongs to the caller. Buffers cross the C ABI as integer
 addresses and are rebuilt with a concrete mutable origin inside each export.
 """
 
-from std.math import floor, sqrt
+from std.math import floor, iota, sqrt
 from std.sys.info import simd_width_of
 
 comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
@@ -113,6 +113,39 @@ def build_node(
     build_node(
         points, indices, nodes, axes, middle + 1, right, depth + 1, node * 2 + 2
     )
+
+
+def build_subtree_task(
+    points: FPtr,
+    indices: IPtr,
+    nodes: IPtr,
+    axes: IPtr,
+    point_count: Int,
+    task: Int,
+):
+    var m0 = point_count // 2
+    var m1 = m0 // 2
+    var m2 = m0 + 1 + (point_count - m0 - 1) // 2
+    var m3 = m1 // 2
+    var m4 = m1 + 1 + (m0 - m1 - 1) // 2
+    var m5 = m0 + 1 + (m2 - m0 - 1) // 2
+    var m6 = m2 + 1 + (point_count - m2 - 1) // 2
+    if task == 0:
+        build_node(points, indices, nodes, axes, 0, m3, 3, 7)
+    elif task == 1:
+        build_node(points, indices, nodes, axes, m3 + 1, m1, 3, 8)
+    elif task == 2:
+        build_node(points, indices, nodes, axes, m1 + 1, m4, 3, 9)
+    elif task == 3:
+        build_node(points, indices, nodes, axes, m4 + 1, m0, 3, 10)
+    elif task == 4:
+        build_node(points, indices, nodes, axes, m0 + 1, m5, 3, 11)
+    elif task == 5:
+        build_node(points, indices, nodes, axes, m5 + 1, m2, 3, 12)
+    elif task == 6:
+        build_node(points, indices, nodes, axes, m2 + 1, m6, 3, 13)
+    else:
+        build_node(points, indices, nodes, axes, m6 + 1, point_count, 3, 14)
 
 
 def insert_neighbor(
@@ -491,10 +524,15 @@ def kdtree_build(
     var indices = ip(indices_addr)
     var nodes = ip(nodes_addr)
     var axes = ip(axes_addr)
-    for i in range(point_count):
-        indices[i] = Int64(i)
     comptime W = simd_width_of[DType.float64]()
     var i = 0
+    while i + W <= point_count:
+        indices.store(i, iota[DType.int64, W](Int64(i)))
+        i += W
+    while i < point_count:
+        indices[i] = Int64(i)
+        i += 1
+    i = 0
     var empty_nodes = SIMD[DType.int64, W](-1)
     while i + W <= node_capacity:
         nodes.store(i, empty_nodes)
@@ -539,98 +577,6 @@ def kdtree_build(
             nodes[6] = indices[m6]
             axes[6] = 2
 
-            @__parameter
-            def build_subtree(task: Int) capturing -> None:
-                var task_points = fp(points_addr)
-                var task_indices = ip(indices_addr)
-                var task_nodes = ip(nodes_addr)
-                var task_axes = ip(axes_addr)
-                if task == 0:
-                    build_node(
-                        task_points, task_indices, task_nodes, task_axes, 0, m3, 3, 7
-                    )
-                elif task == 1:
-                    build_node(
-                        task_points,
-                        task_indices,
-                        task_nodes,
-                        task_axes,
-                        m3 + 1,
-                        m1,
-                        3,
-                        8,
-                    )
-                elif task == 2:
-                    build_node(
-                        task_points,
-                        task_indices,
-                        task_nodes,
-                        task_axes,
-                        m1 + 1,
-                        m4,
-                        3,
-                        9,
-                    )
-                elif task == 3:
-                    build_node(
-                        task_points,
-                        task_indices,
-                        task_nodes,
-                        task_axes,
-                        m4 + 1,
-                        m0,
-                        3,
-                        10,
-                    )
-                elif task == 4:
-                    build_node(
-                        task_points,
-                        task_indices,
-                        task_nodes,
-                        task_axes,
-                        m0 + 1,
-                        m5,
-                        3,
-                        11,
-                    )
-                elif task == 5:
-                    build_node(
-                        task_points,
-                        task_indices,
-                        task_nodes,
-                        task_axes,
-                        m5 + 1,
-                        m2,
-                        3,
-                        12,
-                    )
-                elif task == 6:
-                    build_node(
-                        task_points,
-                        task_indices,
-                        task_nodes,
-                        task_axes,
-                        m2 + 1,
-                        m6,
-                        3,
-                        13,
-                    )
-                else:
-                    build_node(
-                        task_points,
-                        task_indices,
-                        task_nodes,
-                        task_axes,
-                        m6 + 1,
-                        point_count,
-                        3,
-                        14,
-                    )
-
-            for task in range(8):
-                build_subtree(task)
-
-
 @export("m3d_kdtree_build")
 def m3d_kdtree_build(
     points_addr: Int,
@@ -649,6 +595,25 @@ def m3d_kdtree_build(
         axes_addr,
         node_capacity,
         parallel_enabled != 0,
+    )
+
+
+@export("m3d_kdtree_build_subtree")
+def m3d_kdtree_build_subtree(
+    points_addr: Int,
+    point_count: Int,
+    indices_addr: Int,
+    nodes_addr: Int,
+    axes_addr: Int,
+    task: Int,
+) abi("C"):
+    build_subtree_task(
+        fp(points_addr),
+        ip(indices_addr),
+        ip(nodes_addr),
+        ip(axes_addr),
+        point_count,
+        task,
     )
 
 

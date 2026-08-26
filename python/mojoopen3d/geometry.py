@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import math
+import os
 
 import numpy as np
 
 from ._lib import addr, f64, i64, lib, parallel_ready, transform_points
 from .utility import Vector3dVector
+
+
+_SEARCH_PARALLEL_THRESHOLD = 1_024
+_SEARCH_CHUNK_SIZE = 1_024
+_SEARCH_EXECUTOR = ThreadPoolExecutor(max_workers=min(32, os.cpu_count() or 1))
+_BUILD_PARALLEL_THRESHOLD = 16_384
 
 
 def _points(value) -> np.ndarray:
@@ -107,15 +115,35 @@ class KDTreeFlann:
         self._axes = np.empty(capacity, dtype=np.int64)
         indices = np.empty(n, dtype=np.int64)
         if n:
-            lib().m3d_kdtree_build(
+            library = lib()
+            use_parallel = n >= _BUILD_PARALLEL_THRESHOLD and parallel_ready()
+            library.m3d_kdtree_build(
                 addr(self._points),
                 n,
                 addr(indices),
                 addr(self._nodes),
                 addr(self._axes),
                 capacity,
-                int(parallel_ready()),
+                int(use_parallel),
             )
+            if use_parallel:
+                points_addr = addr(self._points)
+                indices_addr = addr(indices)
+                nodes_addr = addr(self._nodes)
+                axes_addr = addr(self._axes)
+                tuple(
+                    _SEARCH_EXECUTOR.map(
+                        lambda task: library.m3d_kdtree_build_subtree(
+                            points_addr,
+                            n,
+                            indices_addr,
+                            nodes_addr,
+                            axes_addr,
+                            task,
+                        ),
+                        range(8),
+                    )
+                )
         return n > 0
 
     def _search_batch(
@@ -139,20 +167,46 @@ class KDTreeFlann:
             np.finfo(np.float64).max if math.isinf(max_distance) else max_distance**2
         )
         if len(queries):
-            lib().m3d_kdtree_search(
-                addr(self._points),
-                addr(self._nodes),
-                addr(self._axes),
-                len(self._nodes),
-                addr(queries),
-                len(queries),
-                limit,
-                max_distance2,
-                addr(indices),
-                addr(distances),
-                addr(counts),
-                int(parallel_ready()),
-            )
+            library = lib()
+            points_addr = addr(self._points)
+            nodes_addr = addr(self._nodes)
+            axes_addr = addr(self._axes)
+            queries_addr = addr(queries)
+            indices_addr = addr(indices)
+            distances_addr = addr(distances)
+            counts_addr = addr(counts)
+
+            def search_range(start: int, end: int) -> None:
+                library.m3d_kdtree_search(
+                    points_addr,
+                    nodes_addr,
+                    axes_addr,
+                    len(self._nodes),
+                    queries_addr + start * 3 * queries.itemsize,
+                    end - start,
+                    limit,
+                    max_distance2,
+                    indices_addr + start * limit * indices.itemsize,
+                    distances_addr + start * limit * distances.itemsize,
+                    counts_addr + start * counts.itemsize,
+                    0,
+                )
+
+            if len(queries) >= _SEARCH_PARALLEL_THRESHOLD and parallel_ready():
+                chunk_size = _SEARCH_CHUNK_SIZE
+                if limit == 1 and len(queries) >= 65_536:
+                    chunk_size *= 2
+                starts = range(0, len(queries), chunk_size)
+                tuple(
+                    _SEARCH_EXECUTOR.map(
+                        lambda start: search_range(
+                            start, min(start + chunk_size, len(queries))
+                        ),
+                        starts,
+                    )
+                )
+            else:
+                search_range(0, len(queries))
         return indices, distances, counts
 
     def search_knn_vector_3d(self, query, knn: int):

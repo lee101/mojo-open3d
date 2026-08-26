@@ -16,6 +16,7 @@ F = ctypes.c_double
 
 _SIGNATURES = {
     "m3d_kdtree_build": ([I, I, I, I, I, I, I], None),
+    "m3d_kdtree_build_subtree": ([I, I, I, I, I, I], None),
     "m3d_kdtree_search": ([I, I, I, I, I, I, I, F, I, I, I, I], None),
     "m3d_voxel_aggregate": (
         [I, I, I, I, F, F, F, F] + [I] * 16,

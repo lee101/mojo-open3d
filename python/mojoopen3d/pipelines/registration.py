@@ -156,13 +156,21 @@ def registration_icp(
     previous_rmse = -1.0
     for _ in range(int(criteria.max_iteration)):
         current = transform_points(source.points, transformation)
-        target_indices, distances, pairs = _correspondences(
-            current, tree, max_correspondence_distance
+        indices, distances, counts = tree._search_batch(
+            current, 1, max_correspondence_distance
         )
-        if not len(pairs):
+        target_indices = indices[:, 0]
+        valid = counts == 1
+        target_indices[~valid] = -1
+        correspondence_count = int(np.count_nonzero(valid))
+        if not correspondence_count:
             break
-        fitness = len(pairs) / len(source.points)
-        rmse = float(np.sqrt(distances[pairs[:, 0]].mean()))
+        fitness = correspondence_count / len(source.points)
+        rmse = float(
+            np.sqrt(
+                np.sum(distances[:, 0], where=valid) / correspondence_count
+            )
+        )
         delta = rigid_estimate(
             current, target.points, target_indices, estimation_method.with_scaling
         )
